@@ -82,7 +82,7 @@ export default function ArchiveDetailPage() {
 
       <div className="bg-zinc-900 mx-3 rounded-2xl overflow-hidden">
         <img
-          src={`/${photo.storagePath}`}
+          src={photo.storagePath}
           alt={photo.caption || ""}
           className="w-full object-contain max-h-[60vh]"
           onError={(e) => {

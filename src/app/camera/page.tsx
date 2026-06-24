@@ -150,9 +150,17 @@ export default function CameraPage() {
     setBusy(true);
     const ctx = c.getContext("2d");
     if (!ctx) { setBusy(false); return; }
-    c.width = v.videoWidth || 1280; c.height = v.videoHeight || 720;
-    ctx.drawImage(v, 0, 0);
-    applyFX(ctx, c.width, c.height, stock);
+
+    const maxDim = 1200;
+    let sw = v.videoWidth || 1280, sh = v.videoHeight || 720;
+    if (sw > maxDim || sh > maxDim) {
+      const scale = sw > sh ? maxDim / sw : maxDim / sh;
+      sw = Math.round(sw * scale);
+      sh = Math.round(sh * scale);
+    }
+    c.width = sw; c.height = sh;
+    ctx.drawImage(v, 0, 0, sw, sh);
+    applyFX(ctx, sw, sh, stock);
 
     c.toBlob(async (blob) => {
       if (!blob) { setBusy(false); return; }
@@ -186,8 +194,7 @@ export default function CameraPage() {
         body: fd,
       });
       setBusy(false);
-      router.push(`/rolls/temp/${rid!}`);
-    }, "image/jpeg", 0.9);
+    }, "image/jpeg", 0.6);
   };
 
   return (

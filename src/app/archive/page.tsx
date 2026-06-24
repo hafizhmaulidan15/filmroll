@@ -53,7 +53,7 @@ export default function ArchivePage() {
               className="aspect-square rounded-xl bg-zinc-800 overflow-hidden relative group"
             >
               <img
-                src={`/${photo.storagePath}`}
+                src={photo.storagePath}
                 alt={photo.caption || ""}
                 className="w-full h-full object-cover"
                 onError={(e) => {

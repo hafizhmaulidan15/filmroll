@@ -77,7 +77,7 @@ export default function SharePage() {
           {data.roll.photos.map((photo, i) => (
             <div key={photo.id} className="aspect-square rounded-xl bg-zinc-800 overflow-hidden relative">
               <img
-                src={`/${photo.storagePath}`}
+                src={photo.storagePath}
                 alt=""
                 className="w-full h-full object-cover"
                 onError={(e) => {

@@ -121,7 +121,7 @@ export default function RollDetailPage() {
           {roll.photos.map((photo) => (
             <div key={photo.id} className="aspect-square rounded-xl bg-zinc-800 overflow-hidden">
               <img
-                src={`/${photo.storagePath}`}
+                src={photo.storagePath}
                 alt=""
                 className="w-full h-full object-cover"
                 style={{ filter: filmFilter }}

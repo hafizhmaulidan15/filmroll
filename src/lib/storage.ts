@@ -38,7 +38,7 @@ export async function saveFile(
   await ensureDir(path.dirname(absolutePath));
   await fs.writeFile(absolutePath, buffer);
 
-  return { storagePath: relativePath.replace(/\\/g, "/"), fileSize: buffer.length };
+  return { storagePath: `/${relativePath.replace(/\\/g, "/")}`, fileSize: buffer.length };
 }
 
 export async function deleteFile(storagePath: string) {

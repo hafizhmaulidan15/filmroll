@@ -124,7 +124,7 @@ export default function TempRollPage() {
             <div key={photo.id} className="rounded-2xl bg-zinc-900 overflow-hidden border border-zinc-800">
               <div className="bg-zinc-800 flex items-center justify-center overflow-hidden" style={{ minHeight: 200 }}>
                 <img
-                  src={`/${photo.storagePath}`}
+                  src={photo.storagePath}
                   alt=""
                   className="w-full object-cover"
                   style={{ filter: filmFilter }}
