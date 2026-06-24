@@ -91,7 +91,7 @@ export default function CameraPage() {
     fetch("/api/v1/film-stocks").then(r => r.json()).then(res => {
       if (res.success && res.data.length) {
         setStocks(res.data);
-        setStock(res.data[10]);
+        setStock(res.data[0]);
       }
     }).catch(() => {});
   }, []);
