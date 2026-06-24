@@ -109,17 +109,9 @@ export default function CameraPage() {
         audio: false,
       });
       stream.current = s;
-      if (video.current) {
-        video.current.srcObject = s;
-        video.current.onloadedmetadata = () => {
-          video.current?.play().then(() => setReady(true)).catch(() => {});
-        };
-      }
-      setTimeout(() => {
-        if (!ready && video.current && !video.current.srcObject) setErr("Camera timeout.");
-      }, 8000);
+      if (video.current) video.current.srcObject = s;
     } catch (e: any) {
-      if (e?.name === "NotAllowedError") setErr("Camera access denied. Allow in browser settings.");
+      if (e?.name === "NotAllowedError") setErr("Camera access denied.");
       else if (e?.name === "NotFoundError") setErr("No camera found.");
       else setErr("Camera unavailable.");
     }
@@ -205,6 +197,8 @@ export default function CameraPage() {
           <video
             ref={video}
             autoPlay playsInline muted
+            onPlaying={() => setReady(true)}
+            onError={() => setErr("Video error.")}
             className="absolute inset-0 w-full h-full object-cover"
             style={{ filter: stock && ready ? cssFilter(stock) : "none" }}
           />
