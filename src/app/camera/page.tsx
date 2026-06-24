@@ -105,14 +105,19 @@ export default function CameraPage() {
     setErr("");
     try {
       const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing, width: 1280, height: 720 },
+        video: { facingMode: facing },
         audio: false,
       });
       stream.current = s;
       if (video.current) {
         video.current.srcObject = s;
-        video.current.onloadedmetadata = () => setReady(true);
+        video.current.onloadedmetadata = () => {
+          video.current?.play().then(() => setReady(true)).catch(() => {});
+        };
       }
+      setTimeout(() => {
+        if (!ready && video.current && !video.current.srcObject) setErr("Camera timeout.");
+      }, 8000);
     } catch (e: any) {
       if (e?.name === "NotAllowedError") setErr("Camera access denied. Allow in browser settings.");
       else if (e?.name === "NotFoundError") setErr("No camera found.");
