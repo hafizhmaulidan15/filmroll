@@ -29,8 +29,8 @@ async function seed() {
   try {
     const count = await prisma.filmStock.count();
     if (count > 0) {
-      await prisma.filmStock.deleteMany();
-      console.log("Cleared existing stocks");
+      console.log(`Film stocks already seeded: ${count}`);
+      return;
     }
     for (const stock of filmStocks) {
       await prisma.filmStock.create({ data: stock });
