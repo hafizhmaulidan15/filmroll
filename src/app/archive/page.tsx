@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faImages } from "@fortawesome/free-solid-svg-icons";
 import type { PhotoType } from "@/types";
 
 export default function ArchivePage() {
@@ -38,7 +40,7 @@ export default function ArchivePage() {
 
       {photos.length === 0 ? (
         <div className="mt-20 text-center">
-          <div className="mb-3 text-4xl text-muted-foreground">▥</div>
+          <div className="mb-3 text-4xl text-muted-foreground"><FontAwesomeIcon icon={faImages} /></div>
           <p className="text-sm text-muted-foreground">No archived photos yet.</p>
           <p className="mt-1 text-xs text-muted-foreground">Capture and save photos to see them here.</p>
         </div>

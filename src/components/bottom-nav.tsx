@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faHouse, faCamera, faImages, faPhotoFilm } from "@fortawesome/free-solid-svg-icons";
 
 const navItems = [
-  { href: "/", label: "Home", icon: "◻" },
-  { href: "/camera", label: "Camera", icon: "○" },
-  { href: "/rolls", label: "Rolls", icon: "▤" },
-  { href: "/archive", label: "Archive", icon: "▥" },
+  { href: "/", label: "Home", icon: faHouse },
+  { href: "/camera", label: "Camera", icon: faCamera },
+  { href: "/rolls", label: "Rolls", icon: faPhotoFilm },
+  { href: "/archive", label: "Archive", icon: faImages },
 ];
 
 export function BottomNav() {
@@ -30,7 +32,7 @@ export function BottomNav() {
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <span className="text-lg">{item.icon}</span>
+              <FontAwesomeIcon icon={item.icon} className="text-lg" />
               <span>{item.label}</span>
             </Link>
           );

@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faXmark, faCameraRotate, faImages, faBars, faCircle } from "@fortawesome/free-solid-svg-icons";
 import type { FilmStockType, AspectRatioEnum } from "@/types";
 
 type Ratios = Record<AspectRatioEnum, string>;
@@ -13,59 +15,47 @@ const RATIOS: { value: AspectRatioEnum; label: string }[] = [
 ];
 
 function cssFilter(s: FilmStockType): string {
-  const c = 1 + (s.contrastLevel - 50) / 40;
-  const sat = 1 + (s.saturationLevel - 50) / 40;
-  const b = 1 - s.fadeAmount / 80;
-  const sep = Math.abs(s.temperatureShift) / 80;
-  const hue = s.temperatureShift;
-  return `contrast(${c}) saturate(${sat}) brightness(${b}) sepia(${sep}) hue-rotate(${hue}deg)`;
+  const c = 0.85 + (s.contrastLevel / 100) * 0.5;
+  const sat = 0.5 + (s.saturationLevel / 100) * 1.0;
+  const b = 1.0 - s.fadeAmount / 150;
+  const hue = s.temperatureShift * 0.8;
+  return `contrast(${c}) saturate(${sat}) brightness(${b}) hue-rotate(${hue}deg)`;
 }
 
 function applyFX(ctx: CanvasRenderingContext2D, w: number, h: number, s: FilmStockType) {
   const img = ctx.getImageData(0, 0, w, h);
   const d = img.data;
 
-  const cFactor = (s.contrastLevel - 50) / 40;
-  const sFactor = (s.saturationLevel - 50) / 40;
-  const fade = s.fadeAmount / 60;
-  const grain = s.grainStrength / 50;
-  const temp = s.temperatureShift * 2;
+  const cVal = 0.85 + (s.contrastLevel / 100) * 0.5;
+  const satVal = 0.5 + (s.saturationLevel / 100) * 1.0;
+  const fadeVal = s.fadeAmount / 200;
+  const grainVal = (s.grainStrength / 100) * 20;
+  const tempVal = s.temperatureShift * 0.6;
 
   for (let i = 0; i < d.length; i += 4) {
     let r = d[i], g = d[i + 1], b = d[i + 2];
 
-    r = 128 + (r - 128) * (1 + cFactor);
-    g = 128 + (g - 128) * (1 + cFactor);
-    b = 128 + (b - 128) * (1 + cFactor);
+    r = 128 + (r - 128) * cVal;
+    g = 128 + (g - 128) * cVal;
+    b = 128 + (b - 128) * cVal;
 
     const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-    r = gray + (r - gray) * (1 + sFactor);
-    g = gray + (g - gray) * (1 + sFactor);
-    b = gray + (b - gray) * (1 + sFactor);
+    r = gray + (r - gray) * satVal;
+    g = gray + (g - gray) * satVal;
+    b = gray + (b - gray) * satVal;
 
-    r += temp; b -= temp;
+    r += tempVal; b -= tempVal;
 
-    r += (128 - r) * fade;
-    g += (128 - g) * fade;
-    b += (128 - b) * fade;
+    r += (128 - r) * fadeVal;
+    g += (128 - g) * fadeVal;
+    b += (128 - b) * fadeVal;
 
-    const noise = (Math.random() - 0.5) * grain * 40;
+    const noise = (Math.random() - 0.5) * grainVal;
     r += noise; g += noise; b += noise;
 
-    d[i] = Math.max(0, Math.min(255, r));
-    d[i + 1] = Math.max(0, Math.min(255, g));
-    d[i + 2] = Math.max(0, Math.min(255, b));
-  }
-
-  // Vignette
-  const cx = w / 2, cy = h / 2, maxDist = Math.sqrt(cx * cx + cy * cy) * 0.7;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
-      const vig = Math.max(0, 1 - Math.max(0, dist - maxDist * 0.4) / (maxDist * 0.6)) * 0.85 + 0.15;
-      const idx = (y * w + x) * 4;
-      d[idx] *= vig; d[idx + 1] *= vig; d[idx + 2] *= vig;
-    }
+    d[i] = Math.max(0, Math.min(255, Math.round(r)));
+    d[i + 1] = Math.max(0, Math.min(255, Math.round(g)));
+    d[i + 2] = Math.max(0, Math.min(255, Math.round(b)));
   }
 
   ctx.putImageData(img, 0, 0);
@@ -175,11 +165,11 @@ export default function CameraPage() {
     <div className="h-dvh bg-black text-white flex flex-col overflow-hidden">
       {/* Minimal header */}
       <div className="flex items-center justify-between px-4 pt-3 pb-1 shrink-0 z-10">
-        <button onClick={() => router.push("/")} className="text-xs text-white/40">✕</button>
+        <button onClick={() => router.push("/")} className="text-xs text-white/40"><FontAwesomeIcon icon={faXmark} size="lg" /></button>
         <div className="flex gap-2 items-center">
           <button onClick={() => setOpen(true)} className="bg-white/10 rounded-full px-3 py-1 text-[10px] font-mono">{stock?.name ?? "Film"}</button>
           {rollId && <button onClick={() => router.push(`/rolls/temp/${rollId}`)} className="bg-white/10 rounded-full px-3 py-1 text-[10px]">Roll</button>}
-          <button onClick={() => setFacing(f => f === "environment" ? "user" : "environment")} className="text-xs text-white/40">⟳</button>
+          <button onClick={() => setFacing(f => f === "environment" ? "user" : "environment")} className="text-xs text-white/40"><FontAwesomeIcon icon={faCameraRotate} /></button>
         </div>
       </div>
 
@@ -229,11 +219,11 @@ export default function CameraPage() {
 
       {/* Shutter row */}
       <div className="flex items-center justify-center gap-10 py-3 shrink-0 z-10">
-        <button onClick={() => router.push("/archive")} className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/30 text-sm">▥</button>
+        <button onClick={() => router.push("/archive")} className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/30 text-sm"><FontAwesomeIcon icon={faImages} /></button>
         <button onClick={capture} disabled={!ready || busy} className="w-14 h-14 rounded-full border-[3px] border-white/30 bg-white/5 active:scale-90 transition-transform disabled:opacity-30 relative">
           {busy && <span className="absolute inset-0.5 rounded-full border border-white animate-ping" />}
         </button>
-        <button onClick={() => rollId ? router.push(`/rolls/temp/${rollId}`) : router.push("/rolls")} className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/30 text-sm">☰</button>
+        <button onClick={() => rollId ? router.push(`/rolls/temp/${rollId}`) : router.push("/rolls")} className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/30 text-sm"><FontAwesomeIcon icon={faBars} /></button>
       </div>
 
       {/* Ratio bar */}
@@ -262,7 +252,7 @@ export default function CameraPage() {
                         <div className="text-sm font-medium">{s.name}</div>
                         <div className="text-[10px] text-zinc-500 mt-0.5">{s.brand} · ISO {s.iso}</div>
                       </div>
-                      {isSel && <span className="text-primary text-lg">●</span>}
+                      {isSel && <span className="text-primary text-xs"><FontAwesomeIcon icon={faCircle} /></span>}
                     </div>
                     <div className="flex gap-3 mt-1.5 text-[9px] text-zinc-600">
                       <span>Contrast {s.contrastLevel}</span>
