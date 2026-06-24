@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RollStatus {
+  ACTIVE
+  FINISHED
+  ARCHIVED
+}
+
+enum PhotoStatus {
+  TEMP
+  ARCHIVED
+  DELETED
+}
+
+enum AspectRatio {
+  SQUARE
+  PORTRAIT
+  STORY
+}
+
+model Visitor {
+  id           String   @id @default(uuid())
+  visitorToken String   @unique
+
+  rolls        Roll[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([visitorToken])
+}
+
+model FilmStock {
+  id               String @id @default(uuid())
+
+  name             String
+  brand            String
+  iso              Int
+
+  grainStrength    Int
+  contrastLevel    Int
+  saturationLevel  Int
+  fadeAmount       Int
+  temperatureShift Int
+
+  isActive         Boolean @default(true)
+
+  rolls            Roll[]
+
+  createdAt        DateTime @default(now())
+}
+
+model Roll {
+  id            String @id @default(uuid())
+
+  visitorId     String
+  visitor       Visitor @relation(fields: [visitorId], references: [id])
+
+  filmStockId   String
+  filmStock     FilmStock @relation(fields: [filmStockId], references: [id])
+
+  title         String?
+
+  aspectRatio   AspectRatio
+
+  status        RollStatus @default(ACTIVE)
+
+  exposureLimit Int @default(36)
+
+  capturedCount Int @default(0)
+
+  photos        Photo[]
+
+  shareRolls    ShareRoll[]
+
+  contactSheet  ContactSheet?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  deletedAt     DateTime?
+
+  @@index([visitorId])
+  @@index([filmStockId])
+}
+
+model Photo {
+  id            String @id @default(uuid())
+
+  rollId        String
+  roll          Roll @relation(fields: [rollId], references: [id])
+
+  status        PhotoStatus
+
+  storagePath   String
+  thumbnailPath String?
+
+  caption       String?
+
+  width         Int?
+  height        Int?
+
+  fileSize      Int?
+  mimeType      String?
+
+  capturedAt    DateTime @default(now())
+  archivedAt    DateTime?
+
+  deletedAt     DateTime?
+
+  @@index([rollId])
+  @@index([status])
+}
+
+model ShareRoll {
+  id         String   @id @default(uuid())
+
+  rollId     String
+  roll       Roll     @relation(fields: [rollId], references: [id])
+
+  shareToken String   @unique
+
+  isActive   Boolean  @default(true)
+
+  expiresAt  DateTime?
+
+  createdAt  DateTime @default(now())
+
+  @@index([shareToken])
+}
+
+model ContactSheet {
+  id          String   @id @default(uuid())
+
+  rollId      String   @unique
+  roll        Roll     @relation(fields: [rollId], references: [id])
+
+  imagePath   String
+
+  generatedAt DateTime @default(now())
+}
