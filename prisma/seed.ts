@@ -28,9 +28,13 @@ const filmStocks = [
 async function seed() {
   try {
     const count = await prisma.filmStock.count();
-    if (count > 0) {
+    if (count === filmStocks.length) {
       console.log(`Film stocks already seeded: ${count}`);
       return;
+    }
+    if (count > 0) {
+      await prisma.$executeRawUnsafe(`TRUNCATE "FilmStock" CASCADE`);
+      console.log("Reset film stocks");
     }
     for (const stock of filmStocks) {
       await prisma.filmStock.create({ data: stock });
