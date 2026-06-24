@@ -1,389 +1,214 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { FilmStockType, AspectRatioEnum } from "@/types";
 
-const RATIO_OPTIONS: { value: AspectRatioEnum; label: string }[] = [
+const RATIOS: { value: AspectRatioEnum; label: string }[] = [
   { value: "SQUARE", label: "1:1" },
   { value: "PORTRAIT", label: "3:4" },
   { value: "STORY", label: "9:16" },
 ];
 
-const RATIO_STYLES: Record<AspectRatioEnum, string> = {
-  SQUARE: "aspect-square max-w-[80vw]",
-  PORTRAIT: "aspect-[3/4] max-w-[70vw]",
-  STORY: "aspect-[9/16] max-w-[50vw]",
-};
+function getFilter(stock: FilmStockType): string {
+  const c = 1 + (stock.contrastLevel - 50) / 60;
+  const s = 1 + (stock.saturationLevel - 50) / 60;
+  const b = 1 - stock.fadeAmount / 150;
+  return `contrast(${c}) saturate(${s}) brightness(${b})`;
+}
 
-function applyFilmFilter(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  stock: FilmStockType
-) {
-  const imageData = ctx.getImageData(0, 0, w, h);
-  const data = imageData.data;
+function applyFilter(ctx: CanvasRenderingContext2D, w: number, h: number, stock: FilmStockType) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const px = d.data;
+  const c = (stock.contrastLevel - 50) / 60;
+  const s = (stock.saturationLevel - 50) / 60;
+  const f = stock.fadeAmount / 120;
+  const g = stock.grainStrength / 80;
+  const t = stock.temperatureShift;
 
-  const contrast = (stock.contrastLevel - 50) / 50;
-  const saturate = (stock.saturationLevel - 50) / 50;
-  const fade = stock.fadeAmount / 100;
-  const tempShift = stock.temperatureShift;
-  const grain = stock.grainStrength / 100;
+  for (let i = 0; i < px.length; i += 4) {
+    let r = px[i], g_ = px[i + 1], b = px[i + 2];
 
-  for (let i = 0; i < data.length; i += 4) {
-    let r = data[i];
-    let g = data[i + 1];
-    let b = data[i + 2];
+    if (c !== 0) { r = 128 + (r - 128) * (1 + c); g_ = 128 + (g_ - 128) * (1 + c); b = 128 + (b - 128) * (1 + c); }
+    if (s !== 0) { const gr = 0.299 * r + 0.587 * g_ + 0.114 * b; r = gr + (r - gr) * (1 + s); g_ = gr + (g_ - gr) * (1 + s); b = gr + (b - gr) * (1 + s); }
+    if (t !== 0) { r += t; b -= t; }
+    if (f > 0) { r += (128 - r) * f; g_ += (128 - g_) * f; b += (128 - b) * f; }
+    if (g > 0) { const n = (Math.random() - 0.5) * g * 50; r += n; g_ += n; b += n; }
 
-    // Contrast
-    if (contrast !== 0) {
-      r = 128 + (r - 128) * (1 + contrast);
-      g = 128 + (g - 128) * (1 + contrast);
-      b = 128 + (b - 128) * (1 + contrast);
-    }
-
-    // Saturation
-    if (saturate !== 0) {
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-      r = gray + (r - gray) * (1 + saturate);
-      g = gray + (g - gray) * (1 + saturate);
-      b = gray + (b - gray) * (1 + saturate);
-    }
-
-    // Temperature shift
-    if (tempShift !== 0) {
-      r += tempShift * 1.5;
-      b -= tempShift * 1.5;
-    }
-
-    // Fade (reduce contrast towards gray)
-    if (fade > 0) {
-      r = r + (128 - r) * fade * 0.5;
-      g = g + (128 - g) * fade * 0.5;
-      b = b + (128 - b) * fade * 0.5;
-    }
-
-    // Grain
-    if (grain > 0) {
-      const noise = (Math.random() - 0.5) * grain * 60;
-      r += noise;
-      g += noise;
-      b += noise;
-    }
-
-    data[i] = Math.max(0, Math.min(255, r));
-    data[i + 1] = Math.max(0, Math.min(255, g));
-    data[i + 2] = Math.max(0, Math.min(255, b));
+    px[i] = Math.max(0, Math.min(255, r));
+    px[i + 1] = Math.max(0, Math.min(255, g_));
+    px[i + 2] = Math.max(0, Math.min(255, b));
   }
-
-  ctx.putImageData(imageData, 0, 0);
+  ctx.putImageData(d, 0, 0);
 }
 
 export default function CameraPage() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
   const [facing, setFacing] = useState<"user" | "environment">("environment");
-  const [filmStocks, setFilmStocks] = useState<FilmStockType[]>([]);
-  const [selectedFilm, setSelectedFilm] = useState<FilmStockType | null>(null);
-  const [aspectRatio, setAspectRatio] = useState<AspectRatioEnum>("PORTRAIT");
-  const [isCameraReady, setIsCameraReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
-  const [activeRollId, setActiveRollId] = useState<string | null>(null);
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [captureFlash, setCaptureFlash] = useState(false);
+  const [stocks, setStocks] = useState<FilmStockType[]>([]);
+  const [stock, setStock] = useState<FilmStockType | null>(null);
+  const [ratio, setRatio] = useState<AspectRatioEnum>("PORTRAIT");
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+  const [rollId, setRollId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setActiveRollId(localStorage.getItem("activeRollId"));
-    fetch("/api/v1/film-stocks")
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.success && res.data.length > 0) {
-          setFilmStocks(res.data);
-          setSelectedFilm(res.data[Math.floor(res.data.length / 2)]);
-        }
-      })
-      .catch(() => {});
+    setRollId(localStorage.getItem("activeRollId"));
+    fetch("/api/v1/film-stocks").then(r => r.json()).then(res => {
+      if (res.success && res.data.length) { setStocks(res.data); setStock(res.data[10]); }
+    }).catch(() => {});
   }, []);
 
-  const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach((t) => t.stop());
-      setStream(null);
-    }
-    setIsCameraReady(false);
-  }, [stream]);
-
-  const startCamera = useCallback(async () => {
+  const start = async () => {
+    stop();
     try {
-      setError(null);
-      stopCamera();
-
-      const constraints: MediaStreamConstraints = {
-        video: {
-          facingMode: facing,
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
+      setError("");
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width: 1280, height: 720 },
         audio: false,
-      };
-
-      const s = await navigator.mediaDevices.getUserMedia(constraints);
-      setStream(s);
+      });
+      streamRef.current = s;
       if (videoRef.current) {
         videoRef.current.srcObject = s;
+        videoRef.current.onloadedmetadata = () => setReady(true);
       }
-      setIsCameraReady(true);
-    } catch (err) {
-      const msg = (err as Error).message || "";
-      if (msg.includes("NotAllowed") || msg.includes("Permission")) {
-        setError("Camera permission denied. Allow camera access in your browser settings.");
-      } else if (msg.includes("NotFound")) {
-        setError("No camera found on this device.");
-      } else {
-        setError("Could not start camera. Try using a different device.");
-      }
+    } catch (e: any) {
+      if (e?.name === "NotAllowedError") setError("Camera blocked. Allow access in browser settings.");
+      else if (e?.name === "NotFoundError") setError("No camera found.");
+      else setError("Camera unavailable.");
     }
-  }, [facing, stopCamera]);
+  };
 
-  useEffect(() => {
-    startCamera();
-    return () => stopCamera();
-  }, [facing, startCamera, stopCamera]);
+  const stop = () => {
+    setReady(false);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+  };
 
-  const toggleFacing = () => setFacing((f) => (f === "environment" ? "user" : "environment"));
+  useEffect(() => { start(); return stop; }, [facing]);
 
   const capture = async () => {
-    if (!videoRef.current || !canvasRef.current || !selectedFilm || isCapturing) return;
-    setIsCapturing(true);
-    setCaptureFlash(true);
-    setTimeout(() => setCaptureFlash(false), 300);
+    const v = videoRef.current, c = canvasRef.current;
+    if (!v || !c || !stock || busy) return;
+    setBusy(true);
+    const ctx = c.getContext("2d");
+    if (!ctx) { setBusy(false); return; }
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    ctx.drawImage(v, 0, 0);
+    applyFilter(ctx, c.width, c.height, stock);
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) { setIsCapturing(false); return; }
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0);
-
-    applyFilmFilter(ctx, canvas.width, canvas.height, selectedFilm);
-
-    canvas.toBlob(async (blob) => {
-      if (!blob) { setIsCapturing(false); return; }
-
+    c.toBlob(async (blob) => {
+      if (!blob) { setBusy(false); return; }
       const token = localStorage.getItem("visitorToken");
-      if (!token) { setIsCapturing(false); return; }
+      if (!token) { setBusy(false); return; }
 
-      let rollId = localStorage.getItem("activeRollId");
-      if (!rollId) {
-        try {
-          const rollRes = await fetch("/api/v1/rolls", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-visitor-token": token },
-            body: JSON.stringify({ filmStockId: selectedFilm.id, aspectRatio }),
-          });
-          const rollData = await rollRes.json();
-          if (rollData.success && rollData.data.id) {
-            rollId = rollData.data.id as string;
-            localStorage.setItem("activeRollId", rollId);
-            setActiveRollId(rollId);
-          }
-        } catch {
-          setIsCapturing(false);
-          return;
-        }
+      let rid = localStorage.getItem("activeRollId");
+      if (!rid) {
+        const r = await fetch("/api/v1/rolls", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-visitor-token": token },
+          body: JSON.stringify({ filmStockId: stock.id, aspectRatio: ratio }),
+        });
+        const d = await r.json();
+        if (d.success) { rid = d.data.id as string; localStorage.setItem("activeRollId", rid!); setRollId(rid); }
+        else { setBusy(false); return; }
       }
 
-      if (!rollId) { setIsCapturing(false); return; }
-
-      const formData = new FormData();
-      formData.append("image", blob, `capture-${Date.now()}.jpg`);
-      formData.append("rollId", rollId);
-
+      const fd = new FormData();
+      fd.append("image", blob, `photo-${Date.now()}.jpg`);
+      fd.append("rollId", rid);
       await fetch("/api/v1/photos/upload", {
-        method: "POST",
-        headers: { "x-visitor-token": token },
-        body: formData,
+        method: "POST", headers: { "x-visitor-token": token }, body: fd,
       });
-
-      setIsCapturing(false);
-      router.push(`/rolls/temp/${rollId}`);
-    }, "image/jpeg", 0.92);
+      setBusy(false);
+      router.push(`/rolls/temp/${rid}`);
+    }, "image/jpeg", 0.9);
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-zinc-950 text-white">
+    <div className="h-dvh bg-black flex flex-col text-white overflow-hidden">
       {/* Header */}
-      <div className="relative z-20 flex items-center justify-between px-4 py-3">
-        <button onClick={() => router.push("/")} className="text-sm text-white/60">← Back</button>
-        <button
-          onClick={() => setIsPickerOpen(true)}
-          className="rounded-full bg-white/10 px-4 py-1.5 text-xs font-medium backdrop-blur border border-white/10"
-        >
-          {selectedFilm?.name ?? "Select Film"}
-        </button>
+      <div className="flex items-center justify-between px-4 py-2 shrink-0 z-10">
+        <button onClick={() => router.push("/")} className="text-xs text-white/50">✕</button>
+        <button onClick={() => setOpen(true)} className="bg-white/10 rounded-full px-3 py-1 text-xs">{stock?.name ?? "Film"}</button>
         <div className="flex gap-2">
-          {activeRollId && (
-            <button
-              onClick={() => router.push(`/rolls/temp/${activeRollId}`)}
-              className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium backdrop-blur"
-            >
-              Review
-            </button>
-          )}
-          <button onClick={toggleFacing} className="text-sm text-white/60">⟳</button>
+          {rollId && <button onClick={() => router.push(`/rolls/temp/${rollId}`)} className="bg-white/10 rounded-full px-3 py-1 text-xs">Roll</button>}
+          <button onClick={() => setFacing(f => f === "environment" ? "user" : "environment")} className="text-xs text-white/50">⟳</button>
         </div>
       </div>
 
       {/* Error */}
-      {error && (
-        <div className="relative z-20 mx-4 mb-2 rounded-xl bg-red-900/60 p-4 text-xs text-red-200 backdrop-blur">
-          <p>{error}</p>
-          <button onClick={startCamera} className="mt-2 underline">Try again</button>
-        </div>
-      )}
+      {error && <div className="mx-4 mb-1 bg-red-900/60 rounded-xl p-3 text-xs text-red-200 z-10"><p>{error}</p><button onClick={start} className="underline mt-1">Retry</button></div>}
 
-      {/* Camera viewfinder */}
-      <div className="relative z-10 flex flex-1 items-center justify-center px-4">
-        <div className={`relative ${RATIO_STYLES[aspectRatio]} w-full overflow-hidden`}>
-          {/* Disposable camera frame */}
-          <div className="absolute inset-0 pointer-events-none z-10">
-            <div className="absolute inset-0 border-[6px] border-white/20 rounded-2xl" />
-            <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-white/40 rounded-tl" />
-            <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-white/40 rounded-tr" />
-            <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-white/40 rounded-bl" />
-            <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-white/40 rounded-br" />
+      {/* Viewfinder */}
+      <div className="flex-1 flex items-center justify-center px-3 min-h-0">
+        <div className="relative w-full max-w-sm aspect-[3/4] rounded-2xl overflow-hidden bg-black shadow-2xl shadow-black/50">
+          <video
+            ref={videoRef}
+            autoPlay playsInline muted
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ filter: stock && ready ? getFilter(stock) : "none" }}
+          />
+          <canvas ref={canvasRef} className="hidden" />
 
-            {/* Film stock info overlay */}
-            {selectedFilm && isCameraReady && (
-              <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
-                <div className="bg-black/50 backdrop-blur rounded-full px-3 py-1">
-                  <span className="text-[10px] text-white/80 font-mono">{selectedFilm.name}</span>
-                </div>
-                <div className="bg-black/50 backdrop-blur rounded-full px-3 py-1">
-                  <span className="text-[10px] text-white/80 font-mono">ISO {selectedFilm.iso}</span>
-                </div>
-              </div>
-            )}
-          </div>
+          {!ready && !error && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+            </div>
+          )}
 
-          {/* Video */}
-          <div className="w-full h-full bg-black rounded-2xl overflow-hidden">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className={`w-full h-full object-cover transition-opacity duration-300 ${isCameraReady ? "opacity-100" : "opacity-0"}`}
-            />
-            <canvas ref={canvasRef} className="hidden" />
+          {/* Frame */}
+          <div className="absolute inset-0 pointer-events-none border-[5px] border-white/15 rounded-2xl" />
+          <div className="absolute top-2 left-2 w-6 h-6 border-t-2 border-l-2 border-white/30 rounded-tl" />
+          <div className="absolute top-2 right-2 w-6 h-6 border-t-2 border-r-2 border-white/30 rounded-tr" />
+          <div className="absolute bottom-2 left-2 w-6 h-6 border-b-2 border-l-2 border-white/30 rounded-bl" />
+          <div className="absolute bottom-2 right-2 w-6 h-6 border-b-2 border-r-2 border-white/30 rounded-br" />
 
-            {!isCameraReady && !error && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center">
-                  <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-3" />
-                  <p className="text-xs text-white/40">Starting camera...</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Capture flash */}
-          {captureFlash && (
-            <div className="absolute inset-0 bg-white z-20 animate-ping rounded-2xl" />
+          {stock && ready && (
+            <div className="absolute bottom-2 left-2 right-2 flex justify-between pointer-events-none">
+              <span className="bg-black/50 text-[9px] px-2 py-0.5 rounded-full font-mono">{stock.name}</span>
+              <span className="bg-black/50 text-[9px] px-2 py-0.5 rounded-full font-mono">ISO {stock.iso}</span>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Bottom controls */}
-      <div className="relative z-20 flex items-center justify-center gap-6 px-4 py-5">
-        <button
-          onClick={() => activeRollId ? router.push(`/rolls/temp/${activeRollId}`) : router.push("/rolls")}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-white/5 text-white/60 backdrop-blur border border-white/10"
-        >
-          ▣
+      {/* Shutter */}
+      <div className="flex items-center justify-center gap-8 py-4 shrink-0 z-10">
+        <button onClick={() => router.push("/archive")} className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-sm text-white/40">▥</button>
+        <button onClick={capture} disabled={!ready || busy} className="w-16 h-16 rounded-full border-[3px] border-white/30 bg-white/5 active:scale-90 transition-transform disabled:opacity-30 relative">
+          {busy && <span className="absolute inset-1 rounded-full border border-white animate-ping" />}
         </button>
-
-        <button
-          onClick={capture}
-          disabled={!isCameraReady || isCapturing}
-          className="relative h-20 w-20 rounded-full bg-white/5 border-[4px] border-white/40 backdrop-blur transition-transform active:scale-90 disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          {isCapturing && (
-            <span className="absolute inset-0 rounded-full border-2 border-white animate-ping" />
-          )}
-        </button>
-
-        <button
-          onClick={() => router.push("/archive")}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-white/5 text-white/60 backdrop-blur border border-white/10"
-        >
-          ▥
-        </button>
+        <button onClick={() => rollId ? router.push(`/rolls/temp/${rollId}`) : router.push("/rolls")} className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-sm text-white/40">☰</button>
       </div>
 
-      {/* Aspect ratio selector */}
-      <div className="relative z-20 flex items-center justify-center gap-2 px-4 pb-6">
-        {RATIO_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => setAspectRatio(opt.value)}
-            className={`px-6 py-2.5 rounded-xl text-xs font-medium transition-all min-w-[70px] ${
-              aspectRatio === opt.value
-                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 scale-105"
-                : "bg-white/5 text-white/50 border border-white/10"
-            }`}
-          >
-            {opt.label}
+      {/* Ratios */}
+      <div className="flex justify-center gap-1 pb-4 shrink-0 z-10">
+        {RATIOS.map(r => (
+          <button key={r.value} onClick={() => setRatio(r.value)} className={`px-4 py-2 rounded-lg text-xs transition-all ${ratio === r.value ? "bg-primary text-black font-medium" : "bg-white/5 text-white/40"}`}>
+            {r.label}
           </button>
         ))}
       </div>
 
-      {/* Film picker modal */}
-      {isPickerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-end" onClick={() => setIsPickerOpen(false)}>
-          <div
-            className="w-full max-w-lg mx-auto max-h-[65vh] overflow-y-auto rounded-t-2xl bg-zinc-900 p-4 border-t border-zinc-700"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="mb-3 text-sm font-medium text-white">Choose Film Stock</h3>
-            <p className="mb-4 text-[10px] text-zinc-500">{filmStocks.length} presets available</p>
-            <div className="space-y-2">
-              {filmStocks.map((stock) => (
-                <button
-                  key={stock.id}
-                  onClick={() => { setSelectedFilm(stock); setIsPickerOpen(false); }}
-                  className={`w-full rounded-xl p-4 text-left transition-all ${
-                    selectedFilm?.id === stock.id
-                      ? "bg-primary/15 border border-primary/50 shadow-lg shadow-primary/5"
-                      : "bg-zinc-800/50 border border-transparent hover:bg-zinc-800"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-medium text-white">{stock.name}</div>
-                      <div className="text-xs text-zinc-400 mt-0.5">{stock.brand} · ISO {stock.iso}</div>
-                    </div>
-                    {selectedFilm?.id === stock.id && (
-                      <span className="text-primary text-lg">●</span>
-                    )}
-                  </div>
-                  <div className="mt-2 flex gap-3 text-[10px] text-zinc-500">
-                    <span className={`${stock.contrastLevel > 60 ? "text-zinc-300" : ""}`}>
-                      Contrast {(stock.contrastLevel / 10).toFixed(0)}/10
-                    </span>
-                    <span className={`${stock.saturationLevel > 60 ? "text-zinc-300" : ""}`}>
-                      Color {(stock.saturationLevel / 10).toFixed(0)}/10
-                    </span>
-                    <span className={`${stock.grainStrength > 40 ? "text-zinc-300" : ""}`}>
-                      Grain {(stock.grainStrength / 10).toFixed(0)}/10
-                    </span>
-                  </div>
+      {/* Film picker */}
+      {open && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-end" onClick={() => setOpen(false)}>
+          <div className="w-full max-w-lg mx-auto max-h-[60vh] rounded-t-2xl bg-zinc-900 overflow-y-auto p-4" onClick={e => e.stopPropagation()}>
+            <p className="text-xs text-zinc-500 mb-3">{stocks.length} film stocks</p>
+            <div className="space-y-1">
+              {stocks.map(s => (
+                <button key={s.id} onClick={() => { setStock(s); setOpen(false); }} className={`w-full rounded-xl p-3 text-left ${stock?.id === s.id ? "bg-primary/10 border border-primary/30" : "bg-zinc-800/50"}`}>
+                  <div className="text-sm font-medium">{s.name}</div>
+                  <div className="text-xs text-zinc-500">{s.brand} ISO {s.iso}</div>
                 </button>
               ))}
             </div>
