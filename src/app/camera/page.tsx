@@ -15,43 +15,56 @@ const RATIOS: { value: AspectRatioEnum; label: string }[] = [
 ];
 
 function cssFilter(s: FilmStockType): string {
-  const c = 0.85 + (s.contrastLevel / 100) * 0.5;
-  const sat = 0.5 + (s.saturationLevel / 100) * 1.0;
-  const b = 1.0 - s.fadeAmount / 150;
-  const hue = s.temperatureShift * 0.8;
-  return `contrast(${c}) saturate(${sat}) brightness(${b}) hue-rotate(${hue}deg)`;
+  const c = 0.9 + (s.contrastLevel / 100) * 0.4;
+  const sat = 0.6 + (s.saturationLevel / 100) * 0.8;
+  const b = 1.0 - s.fadeAmount / 200;
+  const h = s.temperatureShift * 0.6;
+  return `contrast(${c}) saturate(${sat}) brightness(${b}) hue-rotate(${h}deg)`;
+}
+
+function buildLUT(contrast: number, fade: number): Uint8Array {
+  const lut = new Uint8Array(256);
+  const c = (contrast - 50) / 50;
+  const f = fade / 250;
+  for (let i = 0; i < 256; i++) {
+    let v = i / 255;
+    if (c > 0) {
+      v = v < 0.5 ? Math.pow(v * 2, 1 + c * 0.6) / 2 : 1 - Math.pow((1 - v) * 2, 1 + c * 0.6) / 2;
+    } else if (c < 0) {
+      v = v * (1 + c * 0.4) - c * 0.2;
+    }
+    v = v * (1 - f) + f;
+    lut[i] = Math.max(0, Math.min(255, Math.round(v * 255)));
+  }
+  return lut;
 }
 
 function applyFX(ctx: CanvasRenderingContext2D, w: number, h: number, s: FilmStockType) {
   const img = ctx.getImageData(0, 0, w, h);
   const d = img.data;
+  const len = d.length;
 
-  const cVal = 0.85 + (s.contrastLevel / 100) * 0.5;
-  const satVal = 0.5 + (s.saturationLevel / 100) * 1.0;
-  const fadeVal = s.fadeAmount / 200;
-  const grainVal = (s.grainStrength / 100) * 20;
-  const tempVal = s.temperatureShift * 0.6;
+  const lut = buildLUT(s.contrastLevel, s.fadeAmount);
+  const sat = 0.5 + (s.saturationLevel / 100) * 1.0;
+  const warm = s.temperatureShift * 0.5;
+  const grain = (s.grainStrength / 100) * 15;
 
-  for (let i = 0; i < d.length; i += 4) {
+  for (let i = 0; i < len; i += 4) {
     let r = d[i], g = d[i + 1], b = d[i + 2];
 
-    r = 128 + (r - 128) * cVal;
-    g = 128 + (g - 128) * cVal;
-    b = 128 + (b - 128) * cVal;
+    r = lut[r]; g = lut[g]; b = lut[b];
 
     const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-    r = gray + (r - gray) * satVal;
-    g = gray + (g - gray) * satVal;
-    b = gray + (b - gray) * satVal;
+    r = gray + (r - gray) * sat;
+    g = gray + (g - gray) * sat;
+    b = gray + (b - gray) * sat;
 
-    r += tempVal; b -= tempVal;
+    r += warm * 0.6; g += warm * 0.1; b -= warm * 0.7;
 
-    r += (128 - r) * fadeVal;
-    g += (128 - g) * fadeVal;
-    b += (128 - b) * fadeVal;
-
-    const noise = (Math.random() - 0.5) * grainVal;
-    r += noise; g += noise; b += noise;
+    if (grain > 0) {
+      const n = (Math.random() - 0.5) * grain;
+      r += n; g += n; b += n;
+    }
 
     d[i] = Math.max(0, Math.min(255, Math.round(r)));
     d[i + 1] = Math.max(0, Math.min(255, Math.round(g)));
