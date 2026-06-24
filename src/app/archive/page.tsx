@@ -6,24 +6,19 @@ import type { PhotoType } from "@/types";
 
 export default function ArchivePage() {
   const router = useRouter();
-  const [photos, setPhotos] = useState<PhotoType[]>([]);
+  const [photos, setPhotos] = useState<(PhotoType & { filmStockName?: string })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem("visitorToken");
-    if (!token) {
-      setIsLoading(false);
-      return;
-    }
+    if (!token) { setIsLoading(false); return; }
 
     fetch("/api/v1/photos?status=ARCHIVED", {
       headers: { "x-visitor-token": token },
     })
       .then((r) => r.json())
       .then((res) => {
-        if (res.success) {
-          setPhotos(res.data);
-        }
+        if (res.success) setPhotos(res.data);
         setIsLoading(false);
       })
       .catch(() => setIsLoading(false));
@@ -32,7 +27,7 @@ export default function ArchivePage() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-sm text-muted-foreground">Loading archive...</div>
+        <div className="text-sm text-muted-foreground animate-pulse">Loading archive...</div>
       </div>
     );
   }
@@ -44,12 +39,8 @@ export default function ArchivePage() {
       {photos.length === 0 ? (
         <div className="mt-20 text-center">
           <div className="mb-3 text-4xl text-muted-foreground">▥</div>
-          <p className="text-sm text-muted-foreground">
-            No archived photos yet.
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Capture and save photos to see them here.
-          </p>
+          <p className="text-sm text-muted-foreground">No archived photos yet.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Capture and save photos to see them here.</p>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -57,11 +48,26 @@ export default function ArchivePage() {
             <button
               key={photo.id}
               onClick={() => router.push(`/archive/${photo.id}`)}
-              className="aspect-square rounded-xl bg-card overflow-hidden text-left"
+              className="aspect-square rounded-xl bg-zinc-800 overflow-hidden relative group"
             >
-              <div className="flex h-full w-full items-center justify-center bg-muted p-2 text-xs text-muted-foreground">
-                {photo.caption || "No caption"}
+              <img
+                src={`/${photo.storagePath}`}
+                alt={photo.caption || ""}
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                  const fallback = (e.target as HTMLImageElement).nextElementSibling;
+                  if (fallback) fallback.classList.remove("hidden");
+                }}
+              />
+              <div className="hidden text-xs text-zinc-500 flex items-center justify-center w-full h-full bg-zinc-800">
+                No image
               </div>
+              {photo.caption && (
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2">
+                  <p className="text-[10px] text-white truncate">{photo.caption}</p>
+                </div>
+              )}
             </button>
           ))}
         </div>

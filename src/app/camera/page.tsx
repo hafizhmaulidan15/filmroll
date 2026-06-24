@@ -4,11 +4,17 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { FilmStockType, AspectRatioEnum } from "@/types";
 
-const RATIO_OPTIONS: { value: AspectRatioEnum; label: string }[] = [
-  { value: "SQUARE", label: "1:1" },
-  { value: "PORTRAIT", label: "3:4" },
-  { value: "STORY", label: "9:16" },
+const RATIO_OPTIONS: { value: AspectRatioEnum; label: string; icon: string }[] = [
+  { value: "SQUARE", label: "1:1", icon: "▣" },
+  { value: "PORTRAIT", label: "3:4", icon: "▯" },
+  { value: "STORY", label: "9:16", icon: "▮" },
 ];
+
+const RATIO_STYLES: Record<AspectRatioEnum, string> = {
+  SQUARE: "aspect-square",
+  PORTRAIT: "aspect-[3/4]",
+  STORY: "aspect-[9/16]",
+};
 
 export default function CameraPage() {
   const router = useRouter();
@@ -22,8 +28,11 @@ export default function CameraPage() {
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [activeRollId, setActiveRollId] = useState<string | null>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
 
   useEffect(() => {
+    setActiveRollId(localStorage.getItem("activeRollId"));
     fetch("/api/v1/film-stocks")
       .then((r) => r.json())
       .then((res) => {
@@ -35,12 +44,17 @@ export default function CameraPage() {
       .catch(() => {});
   }, []);
 
+  const stopCamera = useCallback(() => {
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+      setStream(null);
+    }
+  }, [stream]);
+
   const startCamera = useCallback(async () => {
     try {
       setError(null);
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
-      }
+      stopCamera();
       const s = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: facing, width: { ideal: 1920 } },
         audio: false,
@@ -53,23 +67,18 @@ export default function CameraPage() {
     } catch {
       setError("Camera access denied. Please allow camera permissions.");
     }
-  }, [facing, stream]);
+  }, [facing, stopCamera]);
 
   useEffect(() => {
     startCamera();
-    return () => {
-      stream?.getTracks().forEach((t) => t.stop());
-    };
-  }, [facing]);
+    return () => stopCamera();
+  }, [facing, startCamera, stopCamera]);
 
-  const toggleFacing = () => {
-    setFacing((f) => (f === "environment" ? "user" : "environment"));
-  };
-
-  const [justCaptured, setJustCaptured] = useState(false);
+  const toggleFacing = () => setFacing((f) => (f === "environment" ? "user" : "environment"));
 
   const capture = async () => {
-    if (!videoRef.current || !canvasRef.current || !selectedFilm) return;
+    if (!videoRef.current || !canvasRef.current || !selectedFilm || isCapturing) return;
+    setIsCapturing(true);
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -81,39 +90,32 @@ export default function CameraPage() {
 
     canvas.toBlob(async (blob) => {
       if (!blob) return;
-      const file = new File([blob], `capture-${Date.now()}.jpg`, {
-        type: "image/jpeg",
-      });
+      const file = new File([blob], `capture-${Date.now()}.jpg`, { type: "image/jpeg" });
+
+      const token = localStorage.getItem("visitorToken");
+      if (!token) { setIsCapturing(false); return; }
 
       let rollId = localStorage.getItem("activeRollId");
       if (!rollId) {
         try {
-          const token = localStorage.getItem("visitorToken");
-          if (!token) return;
-
           const rollRes = await fetch("/api/v1/rolls", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-visitor-token": token,
-            },
-            body: JSON.stringify({
-              filmStockId: selectedFilm.id,
-              aspectRatio,
-            }),
+            headers: { "Content-Type": "application/json", "x-visitor-token": token },
+            body: JSON.stringify({ filmStockId: selectedFilm.id, aspectRatio }),
           });
           const rollData = await rollRes.json();
           if (rollData.success) {
-            rollId = rollData.data.id;
-            localStorage.setItem("activeRollId", rollId!);
+            rollId = rollData.data.id as string;
+            localStorage.setItem("activeRollId", rollId);
+            setActiveRollId(rollId);
           }
         } catch {
+          setIsCapturing(false);
           return;
         }
       }
 
-      const token = localStorage.getItem("visitorToken");
-      if (!token || !rollId) return;
+      if (!rollId) { setIsCapturing(false); return; }
 
       const formData = new FormData();
       formData.append("image", file);
@@ -125,141 +127,112 @@ export default function CameraPage() {
         body: formData,
       });
 
-      setJustCaptured(true);
-      setTimeout(() => setJustCaptured(false), 1500);
+      setIsCapturing(false);
+      router.push(`/rolls/temp/${rollId}`);
     }, "image/jpeg");
   };
 
-  const [activeRollId, setActiveRollId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setActiveRollId(localStorage.getItem("activeRollId"));
-  }, []);
+  const filmFilter = selectedFilm
+    ? `contrast(${1 + (selectedFilm.contrastLevel - 50) / 100}) saturate(${1 + (selectedFilm.saturationLevel - 50) / 100}) brightness(${1 - selectedFilm.fadeAmount / 200}) sepia(${Math.abs(selectedFilm.temperatureShift) / 100}) hue-rotate(${selectedFilm.temperatureShift}deg)`
+    : "none";
 
   return (
-    <div className="relative flex min-h-screen flex-col">
-      <div className="flex items-center justify-between px-4 py-3">
-        <button
-          onClick={() => router.push("/")}
-          className="text-sm text-muted-foreground"
-        >
+    <div className="relative flex min-h-screen flex-col bg-black text-white">
+      <div className="relative z-10 flex items-center justify-between px-4 py-3">
+        <button onClick={() => router.push("/")} className="text-sm text-white/70">
           ← Back
         </button>
-
-        <button
-          onClick={() => setIsPickerOpen(!isPickerOpen)}
-          className="rounded-full bg-card px-3 py-1 text-xs font-medium"
-        >
+        <button onClick={() => setIsPickerOpen(true)} className="rounded-full bg-white/15 px-4 py-1.5 text-xs font-medium backdrop-blur">
           {selectedFilm?.name ?? "Select Film"}
         </button>
-
         <div className="flex gap-2">
           {activeRollId && (
-            <button
-              onClick={() => router.push(`/rolls/temp/${activeRollId}`)}
-              className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
-            >
+            <button onClick={() => router.push(`/rolls/temp/${activeRollId}`)} className="rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium backdrop-blur">
               Review
             </button>
           )}
-          <button onClick={toggleFacing} className="text-sm text-muted-foreground">
-            Flip
-          </button>
+          <button onClick={toggleFacing} className="text-sm text-white/70">Flip</button>
         </div>
       </div>
 
       {error && (
-        <div className="mx-4 mb-2 rounded-lg bg-destructive/10 p-3 text-xs text-destructive">
+        <div className="relative z-10 mx-4 mb-2 rounded-lg bg-red-900/80 p-3 text-xs text-red-200">
           {error}
-          <button onClick={startCamera} className="ml-2 underline">
-            Retry
-          </button>
+          <button onClick={startCamera} className="ml-2 underline">Retry</button>
         </div>
       )}
 
-      <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden mx-4 rounded-xl">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`w-full h-full object-cover ${
-            !isCameraReady ? "opacity-0" : "opacity-100"
-          }`}
-        />
-        <canvas ref={canvasRef} className="hidden" />
-
-        {!isCameraReady && !error && (
-          <div className="absolute text-white text-sm">Starting camera...</div>
-        )}
-
-        <div className="absolute bottom-6 left-0 right-0 flex justify-center">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push("/rolls")}
-              className="h-10 w-10 rounded-full bg-white/20 text-white text-xs backdrop-blur"
-            >
-              ☰
-            </button>
-            <button
-              onClick={capture}
-              disabled={!isCameraReady}
-              className={`relative h-16 w-16 rounded-full border-4 border-white backdrop-blur transition-transform active:scale-95 disabled:opacity-50 ${justCaptured ? "bg-primary scale-110" : "bg-white/10"}`}
-            >
-              {justCaptured && (
-                <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-primary animate-ping" />
-              )}
-            </button>
-            <button
-              onClick={() => router.push("/archive")}
-              className="h-10 w-10 rounded-full bg-white/20 text-white text-xs backdrop-blur"
-            >
-              ▥
-            </button>
-          </div>
+      <div className="relative flex-1 flex items-center justify-center mx-3">
+        <div className={`relative ${RATIO_STYLES[aspectRatio]} w-full max-h-[75vh] overflow-hidden rounded-2xl bg-black`}>
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`absolute inset-0 w-full h-full object-cover ${isCameraReady ? "opacity-100" : "opacity-0"}`}
+            style={{ filter: isCameraReady ? filmFilter : "none" }}
+          />
+          <canvas ref={canvasRef} className="hidden" />
+          {!isCameraReady && !error && (
+            <div className="absolute inset-0 flex items-center justify-center text-sm text-white/50">
+              Starting camera...
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center justify-center gap-2 px-4 py-4">
+      <div className="relative z-10 flex items-center justify-center gap-4 px-4 py-5">
+        <button onClick={() => router.push("/archive")} className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-lg backdrop-blur">
+          ▥
+        </button>
+        <button
+          onClick={capture}
+          disabled={!isCameraReady || isCapturing}
+          className="relative h-18 w-18 rounded-full border-[4px] border-white bg-white/10 backdrop-blur transition-transform active:scale-90 disabled:opacity-40"
+        >
+          {isCapturing && <span className="absolute inset-0 rounded-full bg-white/30 animate-pulse" />}
+        </button>
+        <button onClick={() => activeRollId ? router.push(`/rolls/temp/${activeRollId}`) : router.push("/rolls")} className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-lg backdrop-blur">
+          ☰
+        </button>
+      </div>
+
+      <div className="relative z-10 flex items-center justify-center gap-3 px-4 pb-6">
         {RATIO_OPTIONS.map((opt) => (
           <button
             key={opt.value}
             onClick={() => setAspectRatio(opt.value)}
-            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+            className={`flex flex-col items-center gap-1 rounded-2xl px-6 py-3 text-xs font-medium transition-all min-w-[72px] ${
               aspectRatio === opt.value
-                ? "bg-primary text-primary-foreground"
-                : "bg-card text-muted-foreground"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/30 scale-105"
+                : "bg-white/10 text-white/70 backdrop-blur"
             }`}
           >
-            {opt.label}
+            <span className="text-lg">{opt.icon}</span>
+            <span>{opt.label}</span>
           </button>
         ))}
       </div>
 
       {isPickerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-end" onClick={() => setIsPickerOpen(false)}>
-          <div
-            className="w-full max-w-lg mx-auto max-h-96 overflow-y-auto rounded-t-2xl bg-background p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="mb-3 text-sm font-medium">Choose Film Stock</h3>
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-end" onClick={() => setIsPickerOpen(false)}>
+          <div className="w-full max-w-lg mx-auto max-h-[70vh] overflow-y-auto rounded-t-2xl bg-zinc-900 p-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-3 text-sm font-medium text-white">Choose Film Stock</h3>
             <div className="space-y-2">
               {filmStocks.map((stock) => (
                 <button
                   key={stock.id}
-                  onClick={() => {
-                    setSelectedFilm(stock);
-                    setIsPickerOpen(false);
-                  }}
-                  className={`w-full rounded-xl p-3 text-left transition-colors ${
-                    selectedFilm?.id === stock.id
-                      ? "bg-primary/10 border border-primary"
-                      : "bg-card"
+                  onClick={() => { setSelectedFilm(stock); setIsPickerOpen(false); }}
+                  className={`w-full rounded-xl p-4 text-left transition-colors ${
+                    selectedFilm?.id === stock.id ? "bg-primary/20 border border-primary" : "bg-zinc-800"
                   }`}
                 >
-                  <div className="text-sm font-medium">{stock.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {stock.brand} · ISO {stock.iso}
+                  <div className="text-sm font-medium text-white">{stock.name}</div>
+                  <div className="text-xs text-zinc-400">{stock.brand} · ISO {stock.iso}</div>
+                  <div className="mt-1 flex gap-2 text-[10px] text-zinc-500">
+                    <span>Grain {stock.grainStrength}%</span>
+                    <span>Contrast {stock.contrastLevel}%</span>
+                    <span>Fade {stock.fadeAmount}%</span>
                   </div>
                 </button>
               ))}
