@@ -6,8 +6,6 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faXmark, faCameraRotate, faImages, faBars, faCircle } from "@fortawesome/free-solid-svg-icons";
 import type { FilmStockType, AspectRatioEnum } from "@/types";
 
-type Ratios = Record<AspectRatioEnum, string>;
-
 const RATIOS: { value: AspectRatioEnum; label: string }[] = [
   { value: "SQUARE", label: "1:1" },
   { value: "PORTRAIT", label: "3:4" },
@@ -51,21 +49,13 @@ function applyFX(ctx: CanvasRenderingContext2D, w: number, h: number, s: FilmSto
 
   for (let i = 0; i < len; i += 4) {
     let r = d[i], g = d[i + 1], b = d[i + 2];
-
     r = lut[r]; g = lut[g]; b = lut[b];
-
     const gray = 0.299 * r + 0.587 * g + 0.114 * b;
     r = gray + (r - gray) * sat;
     g = gray + (g - gray) * sat;
     b = gray + (b - gray) * sat;
-
     r += warm * 0.6; g += warm * 0.1; b -= warm * 0.7;
-
-    if (grain > 0) {
-      const n = (Math.random() - 0.5) * grain;
-      r += n; g += n; b += n;
-    }
-
+    if (grain > 0) { const n = (Math.random() - 0.5) * grain; r += n; g += n; b += n; }
     d[i] = Math.max(0, Math.min(255, Math.round(r)));
     d[i + 1] = Math.max(0, Math.min(255, Math.round(g)));
     d[i + 2] = Math.max(0, Math.min(255, Math.round(b)));
@@ -78,7 +68,8 @@ export default function CameraPage() {
   const router = useRouter();
   const video = useRef<HTMLVideoElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const stream = useRef<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const mountedRef = useRef(true);
 
   const [facing, setFacing] = useState<"user" | "environment">("environment");
   const [stocks, setStocks] = useState<FilmStockType[]>([]);
@@ -91,6 +82,11 @@ export default function CameraPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
     setRollId(localStorage.getItem("activeRollId"));
     fetch("/api/v1/film-stocks").then(r => r.json()).then(res => {
       if (res.success && res.data.length) {
@@ -100,30 +96,53 @@ export default function CameraPage() {
     }).catch(() => {});
   }, []);
 
-  const start = async () => {
-    stop();
-    setErr("");
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing },
-        audio: false,
-      });
-      stream.current = s;
-      if (video.current) video.current.srcObject = s;
-    } catch (e: any) {
-      if (e?.name === "NotAllowedError") setErr("Camera access denied.");
-      else if (e?.name === "NotFoundError") setErr("No camera found.");
-      else setErr("Camera unavailable.");
-    }
-  };
+  useEffect(() => {
+    const el = video.current;
+    if (!el) return;
 
-  const stop = () => {
-    setReady(false);
-    stream.current?.getTracks().forEach(t => t.stop());
-    stream.current = null;
-  };
+    let timeout: ReturnType<typeof setTimeout>;
 
-  useEffect(() => { start(); return stop; }, [facing]);
+    const onReady = () => { if (mountedRef.current) { setReady(true); clearTimeout(timeout); } };
+
+    el.addEventListener("playing", onReady);
+    el.addEventListener("loadeddata", onReady);
+    el.addEventListener("canplay", onReady);
+
+    const startCam = async () => {
+      setReady(false);
+      setErr("");
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+        if (!mountedRef.current) { s.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = s;
+        el.srcObject = s;
+        timeout = setTimeout(() => {
+          if (mountedRef.current && !el.srcObject) setErr("Camera timeout.");
+        }, 8000);
+      } catch (e: any) {
+        if (!mountedRef.current) return;
+        if (e?.name === "NotAllowedError") setErr("Camera access denied.");
+        else if (e?.name === "NotFoundError" || e?.name === "DevicesNotFoundError") setErr("No camera found.");
+        else setErr("Camera unavailable: " + (e?.message || ""));
+      }
+    };
+
+    startCam();
+
+    return () => {
+      clearTimeout(timeout);
+      el.removeEventListener("playing", onReady);
+      el.removeEventListener("loadeddata", onReady);
+      el.removeEventListener("canplay", onReady);
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    };
+  }, [facing]);
 
   const capture = async () => {
     const v = video.current, c = canvas.current;
@@ -131,7 +150,7 @@ export default function CameraPage() {
     setBusy(true);
     const ctx = c.getContext("2d");
     if (!ctx) { setBusy(false); return; }
-    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.width = v.videoWidth || 1280; c.height = v.videoHeight || 720;
     ctx.drawImage(v, 0, 0);
     applyFX(ctx, c.width, c.height, stock);
 
@@ -149,12 +168,12 @@ export default function CameraPage() {
             body: JSON.stringify({ filmStockId: stock.id, aspectRatio: ratio }),
           });
           const d = await r.json();
-            if (d.success && d.data.id) {
-              const newId = d.data.id as string;
-              localStorage.setItem("activeRollId", newId);
-              setRollId(newId);
-              rid = newId;
-            } else { setBusy(false); return; }
+          if (d.success && d.data.id) {
+            const newId = d.data.id as string;
+            localStorage.setItem("activeRollId", newId);
+            setRollId(newId);
+            rid = newId;
+          } else { setBusy(false); return; }
         } catch { setBusy(false); return; }
       }
 
@@ -173,7 +192,6 @@ export default function CameraPage() {
 
   return (
     <div className="h-dvh bg-black text-white flex flex-col overflow-hidden">
-      {/* Minimal header */}
       <div className="flex items-center justify-between px-4 pt-3 pb-1 shrink-0 z-10">
         <button onClick={() => router.push("/")} className="text-xs text-white/40"><FontAwesomeIcon icon={faXmark} size="lg" /></button>
         <div className="flex gap-2 items-center">
@@ -183,22 +201,20 @@ export default function CameraPage() {
         </div>
       </div>
 
-      {/* Error */}
       {err && (
         <div className="mx-4 mb-1 bg-red-900/50 rounded-xl p-3 z-10">
           <p className="text-xs text-red-200">{err}</p>
-          <button onClick={start} className="text-xs text-red-300 underline mt-1">Retry</button>
+          <button onClick={() => setFacing(f => f)} className="text-xs text-red-300 underline mt-1">Retry</button>
         </div>
       )}
 
-      {/* Viewfinder - pushed up */}
       <div className="flex-1 flex items-start justify-center pt-2 min-h-0 px-2">
         <div className="relative w-full max-w-sm bg-black overflow-hidden shadow-2xl" style={{ aspectRatio: ratio === "SQUARE" ? "1/1" : ratio === "PORTRAIT" ? "3/4" : "9/16", maxHeight: "78vh" }}>
           <video
             ref={video}
-            autoPlay playsInline muted
-            onPlaying={() => setReady(true)}
-            onError={() => setErr("Video error.")}
+            autoPlay
+            playsInline
+            muted
             className="absolute inset-0 w-full h-full object-cover"
             style={{ filter: stock && ready ? cssFilter(stock) : "none" }}
           />
@@ -210,7 +226,6 @@ export default function CameraPage() {
             </div>
           )}
 
-          {/* Disposable camera frame */}
           <div className="absolute inset-0 pointer-events-none">
             <div className="absolute inset-0 border-[4px] border-white/20" />
             <div className="absolute -top-[1px] -left-[1px] w-8 h-8 border-t-[3px] border-l-[3px] border-white/40" />
@@ -219,7 +234,6 @@ export default function CameraPage() {
             <div className="absolute -bottom-[1px] -right-[1px] w-8 h-8 border-b-[3px] border-r-[3px] border-white/40" />
           </div>
 
-          {/* Film info pill */}
           {stock && ready && (
             <div className="absolute bottom-2 left-2 right-2 flex justify-between pointer-events-none">
               <span className="bg-black/60 text-[8px] px-2 py-0.5 rounded font-mono tracking-wider">{stock.name.toUpperCase()}</span>
@@ -229,7 +243,6 @@ export default function CameraPage() {
         </div>
       </div>
 
-      {/* Shutter row */}
       <div className="flex items-center justify-center gap-10 py-3 shrink-0 z-10">
         <button onClick={() => router.push("/archive")} className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/30 text-sm"><FontAwesomeIcon icon={faImages} /></button>
         <button onClick={capture} disabled={!ready || busy} className="w-14 h-14 rounded-full border-[3px] border-white/30 bg-white/5 active:scale-90 transition-transform disabled:opacity-30 relative">
@@ -238,7 +251,6 @@ export default function CameraPage() {
         <button onClick={() => rollId ? router.push(`/rolls/temp/${rollId}`) : router.push("/rolls")} className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/30 text-sm"><FontAwesomeIcon icon={faBars} /></button>
       </div>
 
-      {/* Ratio bar */}
       <div className="flex justify-center gap-1 pb-3 shrink-0 z-10">
         {RATIOS.map(r => (
           <button key={r.value} onClick={() => setRatio(r.value)}
@@ -248,7 +260,6 @@ export default function CameraPage() {
         ))}
       </div>
 
-      {/* Stock picker */}
       {open && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-end" onClick={() => setOpen(false)}>
           <div className="w-full max-w-lg mx-auto max-h-[55vh] rounded-t-2xl bg-zinc-900 overflow-y-auto p-4" onClick={e => e.stopPropagation()}>
