@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faXmark, faCameraRotate, faImages, faBars, faCircle } from "@fortawesome/free-solid-svg-icons";
 import type { FilmStockType, AspectRatioEnum } from "@/types";
+import { loadLUT, applyLUT, stockNameToLUTPath, clearLUTCache, type LUT3D } from "@/lib/lut";
 
 const RATIOS: { value: AspectRatioEnum; label: string }[] = [
   { value: "SQUARE", label: "1:1" },
@@ -37,25 +38,32 @@ function buildLUT(contrast: number, fade: number): Uint8Array {
   return lut;
 }
 
-function applyFX(ctx: CanvasRenderingContext2D, w: number, h: number, s: FilmStockType) {
+function applyFX(ctx: CanvasRenderingContext2D, w: number, h: number, s: FilmStockType, lut?: LUT3D | null) {
   const img = ctx.getImageData(0, 0, w, h);
   const d = img.data;
   const len = d.length;
 
-  const lut = buildLUT(s.contrastLevel, s.fadeAmount);
   const sat = 0.5 + (s.saturationLevel / 100) * 1.0;
   const warm = s.temperatureShift * 0.5;
   const grain = (s.grainStrength / 100) * 15;
 
   for (let i = 0; i < len; i += 4) {
     let r = d[i], g = d[i + 1], b = d[i + 2];
-    r = lut[r]; g = lut[g]; b = lut[b];
+
+    if (lut) {
+      [r, g, b] = applyLUT(lut, r, g, b);
+    } else {
+      const lut1d = buildLUT(s.contrastLevel, s.fadeAmount);
+      r = lut1d[r]; g = lut1d[g]; b = lut1d[b];
+    }
+
     const gray = 0.299 * r + 0.587 * g + 0.114 * b;
     r = gray + (r - gray) * sat;
     g = gray + (g - gray) * sat;
     b = gray + (b - gray) * sat;
     r += warm * 0.6; g += warm * 0.1; b -= warm * 0.7;
     if (grain > 0) { const n = (Math.random() - 0.5) * grain; r += n; g += n; b += n; }
+
     d[i] = Math.max(0, Math.min(255, Math.round(r)));
     d[i + 1] = Math.max(0, Math.min(255, Math.round(g)));
     d[i + 2] = Math.max(0, Math.min(255, Math.round(b)));
@@ -80,6 +88,7 @@ export default function CameraPage() {
   const [open, setOpen] = useState(false);
   const [rollId, setRollId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const lutRef = useRef<LUT3D | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -92,6 +101,7 @@ export default function CameraPage() {
       if (res.success && res.data.length) {
         setStocks(res.data);
         setStock(res.data[0]);
+        loadLUT(stockNameToLUTPath(res.data[0].name)).then(l => { lutRef.current = l; });
       }
     }).catch(() => {});
   }, []);
@@ -160,7 +170,7 @@ export default function CameraPage() {
     }
     c.width = sw; c.height = sh;
     ctx.drawImage(v, 0, 0, sw, sh);
-    applyFX(ctx, sw, sh, stock);
+    applyFX(ctx, sw, sh, stock, lutRef.current);
 
     c.toBlob(async (blob) => {
       if (!blob) { setBusy(false); return; }
@@ -275,7 +285,7 @@ export default function CameraPage() {
               {stocks.map(s => {
                 const isSel = stock?.id === s.id;
                 return (
-                  <button key={s.id} onClick={() => { setStock(s); setOpen(false); }}
+                  <button key={s.id} onClick={() => { setStock(s); setOpen(false); loadLUT(stockNameToLUTPath(s.name)).then(l => { lutRef.current = l; }); }}
                     className={`w-full rounded-xl p-3 text-left transition-all ${isSel ? "bg-primary/10 border border-primary/30" : "bg-zinc-800/30 hover:bg-zinc-800"}`}>
                     <div className="flex items-center justify-between">
                       <div>
